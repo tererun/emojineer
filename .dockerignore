@@ -1,0 +1,7 @@
+node_modules
+dist
+.fonts
+.git
+.env
+.DS_Store
+.claude
