@@ -18,6 +18,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # font cache
 .fonts
 
+# runtime config
+config
+
 # dotenv environment variable files
 .env
 .env.development.local

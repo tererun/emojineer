@@ -13,10 +13,21 @@ import {
   StringSelectMenuBuilder,
   AttachmentBuilder,
   PermissionFlagsBits,
+  ChannelType,
   LabelBuilder,
 } from "discord.js";
 import { renderEmoji } from "./emoji-renderer";
 import { initFonts, FONT_LIST } from "./fonts";
+import {
+  loadPermissions,
+  checkPermission,
+  addRole,
+  removeRole,
+  addChannel,
+  removeChannel,
+  resetGuild,
+  getGuildPermissions,
+} from "./permissions";
 
 const TOKEN = process.env.DISCORD_TOKEN!;
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID!;
@@ -43,15 +54,74 @@ const client = new Client({
 });
 
 async function registerCommands() {
-  const command = new SlashCommandBuilder()
+  const emojiCommand = new SlashCommandBuilder()
     .setName("emoji")
     .setDescription("テキストから絵文字を作成します");
 
+  const configCommand = new SlashCommandBuilder()
+    .setName("emoji-config")
+    .setDescription("絵文字コマンドの権限を設定します")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+    .addSubcommand((sub) =>
+      sub.setName("show").setDescription("現在の権限設定を表示します"),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("add-role")
+        .setDescription("許可ロールを追加します")
+        .addRoleOption((opt) =>
+          opt
+            .setName("role")
+            .setDescription("追加するロール")
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("remove-role")
+        .setDescription("許可ロールを削除します")
+        .addRoleOption((opt) =>
+          opt
+            .setName("role")
+            .setDescription("削除するロール")
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("add-channel")
+        .setDescription("許可チャンネルを追加します")
+        .addChannelOption((opt) =>
+          opt
+            .setName("channel")
+            .setDescription("追加するチャンネル")
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("remove-channel")
+        .setDescription("許可チャンネルを削除します")
+        .addChannelOption((opt) =>
+          opt
+            .setName("channel")
+            .setDescription("削除するチャンネル")
+            .addChannelTypes(ChannelType.GuildText)
+            .setRequired(true),
+        ),
+    )
+    .addSubcommand((sub) =>
+      sub
+        .setName("reset")
+        .setDescription("このサーバーの権限設定をリセットします"),
+    );
+
   const rest = new REST({ version: "10" }).setToken(TOKEN);
   await rest.put(Routes.applicationCommands(CLIENT_ID), {
-    body: [command.toJSON()],
+    body: [emojiCommand.toJSON(), configCommand.toJSON()],
   });
-  console.log("Slash command registered.");
+  console.log("Slash commands registered.");
 }
 
 function buildModal(defaults?: {
@@ -159,11 +229,36 @@ client.on("clientReady", () => {
 
 client.on("interactionCreate", async (interaction) => {
   try {
-    // /emoji コマンド → Modal表示
+    // /emoji コマンド → 権限チェック → Modal表示
     if (
       interaction.isChatInputCommand() &&
       interaction.commandName === "emoji"
     ) {
+      if (interaction.guild) {
+        const member = interaction.guild.members.cache.get(
+          interaction.user.id,
+        );
+        if (
+          member &&
+          !member.permissions.has(PermissionFlagsBits.ManageGuild)
+        ) {
+          const memberRoleIds = [...member.roles.cache.keys()];
+          if (
+            !checkPermission(
+              interaction.guildId!,
+              interaction.channelId,
+              memberRoleIds,
+            )
+          ) {
+            await interaction.reply({
+              content: "このコマンドを使用する権限がありません。",
+              flags: 64,
+            });
+            return;
+          }
+        }
+      }
+
       const existing = sessions.get(interaction.user.id);
       const modal = buildModal(
         existing
@@ -175,6 +270,118 @@ client.on("interactionCreate", async (interaction) => {
           : undefined,
       );
       await interaction.showModal(modal);
+      return;
+    }
+
+    // /emoji-config コマンド → 権限設定
+    if (
+      interaction.isChatInputCommand() &&
+      interaction.commandName === "emoji-config"
+    ) {
+      if (!interaction.guild) {
+        await interaction.reply({
+          content: "サーバー内でのみ使用できます。",
+          flags: 64,
+        });
+        return;
+      }
+
+      const guildId = interaction.guildId!;
+      const sub = interaction.options.getSubcommand();
+
+      switch (sub) {
+        case "show": {
+          const perms = getGuildPermissions(guildId);
+          const roles =
+            perms.allowedRoles.length > 0
+              ? perms.allowedRoles.map((id) => `<@&${id}>`).join(", ")
+              : "制限なし（全員）";
+          const channels =
+            perms.allowedChannels.length > 0
+              ? perms.allowedChannels.map((id) => `<#${id}>`).join(", ")
+              : "制限なし（全チャンネル）";
+          await interaction.reply({
+            content: [
+              "**絵文字コマンドの権限設定**",
+              `許可ロール: ${roles}`,
+              `許可チャンネル: ${channels}`,
+              "",
+              "*サーバー管理権限を持つメンバーは常に使用可能です*",
+            ].join("\n"),
+            flags: 64,
+          });
+          return;
+        }
+        case "add-role": {
+          const role = interaction.options.getRole("role", true);
+          if (addRole(guildId, role.id)) {
+            await interaction.reply({
+              content: `<@&${role.id}> を許可ロールに追加しました。`,
+              flags: 64,
+            });
+          } else {
+            await interaction.reply({
+              content: `<@&${role.id}> は既に許可ロールに含まれています。`,
+              flags: 64,
+            });
+          }
+          return;
+        }
+        case "remove-role": {
+          const role = interaction.options.getRole("role", true);
+          if (removeRole(guildId, role.id)) {
+            await interaction.reply({
+              content: `<@&${role.id}> を許可ロールから削除しました。`,
+              flags: 64,
+            });
+          } else {
+            await interaction.reply({
+              content: `<@&${role.id}> は許可ロールに含まれていません。`,
+              flags: 64,
+            });
+          }
+          return;
+        }
+        case "add-channel": {
+          const channel = interaction.options.getChannel("channel", true);
+          if (addChannel(guildId, channel.id)) {
+            await interaction.reply({
+              content: `<#${channel.id}> を許可チャンネルに追加しました。`,
+              flags: 64,
+            });
+          } else {
+            await interaction.reply({
+              content: `<#${channel.id}> は既に許可チャンネルに含まれています。`,
+              flags: 64,
+            });
+          }
+          return;
+        }
+        case "remove-channel": {
+          const channel = interaction.options.getChannel("channel", true);
+          if (removeChannel(guildId, channel.id)) {
+            await interaction.reply({
+              content: `<#${channel.id}> を許可チャンネルから削除しました。`,
+              flags: 64,
+            });
+          } else {
+            await interaction.reply({
+              content: `<#${channel.id}> は許可チャンネルに含まれていません。`,
+              flags: 64,
+            });
+          }
+          return;
+        }
+        case "reset": {
+          resetGuild(guildId);
+          await interaction.reply({
+            content:
+              "権限設定をリセットしました。全メンバー・全チャンネルで使用可能です。",
+            flags: 64,
+          });
+          return;
+        }
+      }
       return;
     }
 
@@ -334,6 +541,7 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 async function main() {
+  loadPermissions();
   await initFonts();
   await registerCommands();
   await client.login(TOKEN);
