@@ -4,7 +4,7 @@ export interface ColorTemplate {
   emoji: string;
 }
 
-// プレビューのセレクトメニューに出す色
+// 入力モーダルのセレクトに出す色
 // 追加するときは label / value / emoji を足すだけ
 export const COLOR_LIST: ColorTemplate[] = [
   { label: "白", value: "#ffffff", emoji: "⚪" },

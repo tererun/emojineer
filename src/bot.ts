@@ -156,19 +156,32 @@ function buildModal(defaults?: {
     .setMaxLength(100);
   if (defaults?.text) textInput.setValue(defaults.text);
 
+  const customBackground =
+    defaults?.background && findColorIndex(defaults.background) < 0
+      ? defaults.background
+      : undefined;
+
   const bgInput = new TextInputBuilder()
     .setCustomId("emoji_bg")
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder("空欄で白。テンプレートは次の画面")
+    .setPlaceholder("#fff / linear-gradient(45deg, red, blue)")
     .setRequired(false);
-  if (defaults?.background) bgInput.setValue(defaults.background);
+  if (customBackground) bgInput.setValue(customBackground);
 
   modal.addLabelComponents(
     new LabelBuilder()
       .setLabel("絵文字の名前")
       .setTextInputComponent(nameInput),
     new LabelBuilder().setLabel("テキスト").setTextInputComponent(textInput),
-    new LabelBuilder().setLabel("色").setTextInputComponent(bgInput),
+    new LabelBuilder()
+      .setLabel("色のテンプレート")
+      .setStringSelectMenuComponent(
+        buildColorSelect(defaults?.background ?? DEFAULT_BACKGROUND),
+      ),
+    new LabelBuilder()
+      .setLabel("カスタム色")
+      .setDescription("入力するとテンプレートより優先されます")
+      .setTextInputComponent(bgInput),
   );
 
   return modal;
@@ -224,9 +237,6 @@ function buildPreviewPayload(session: EmojiSession) {
     files: [attachment],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fontSelect),
-      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-        buildColorSelect(session.background),
-      ),
       buttons,
     ],
   };
@@ -239,7 +249,6 @@ function buildColorSelect(background: string): StringSelectMenuBuilder {
     value: string;
     emoji: string;
     default: boolean;
-    description?: string;
   }[] = COLOR_LIST.map((color, i) => ({
     label: color.label,
     value: String(i),
@@ -248,21 +257,27 @@ function buildColorSelect(background: string): StringSelectMenuBuilder {
   }));
 
   if (selected < 0) {
-    const description =
-      background.length > 100 ? `${background.slice(0, 97)}...` : background;
     options.unshift({
       label: "カスタム",
       value: "custom",
       emoji: "🎨",
-      description,
       default: true,
     });
   }
 
   return new StringSelectMenuBuilder()
-    .setCustomId("emoji_color_select")
+    .setCustomId("emoji_color")
     .setPlaceholder("色のテンプレート")
+    .setMinValues(1)
+    .setMaxValues(1)
     .addOptions(options);
+}
+
+function resolveBackground(selected: string | undefined, custom: string): string | null {
+  const trimmed = custom.trim();
+  if (trimmed) return trimmed;
+  if (!selected || selected === "custom") return null;
+  return COLOR_LIST[parseInt(selected, 10)]?.value ?? null;
 }
 
 client.on("clientReady", () => {
@@ -431,8 +446,17 @@ client.on("interactionCreate", async (interaction) => {
     if (interaction.isModalSubmit() && interaction.customId === "emoji_modal") {
       const emojiName = interaction.fields.getTextInputValue("emoji_name");
       const text = interaction.fields.getTextInputValue("emoji_text");
-      const background =
-        interaction.fields.getTextInputValue("emoji_bg") || DEFAULT_BACKGROUND;
+      const background = resolveBackground(
+        interaction.fields.getStringSelectValues("emoji_color")[0],
+        interaction.fields.getTextInputValue("emoji_bg"),
+      );
+      if (!background) {
+        await interaction.reply({
+          content: "色のテンプレートを選ぶか、カスタム色を入力してください。",
+          flags: 64,
+        });
+        return;
+      }
 
       if (!/^[a-zA-Z0-9_]{2,32}$/.test(emojiName)) {
         await interaction.reply({
@@ -483,41 +507,6 @@ client.on("interactionCreate", async (interaction) => {
       session.fontIndex = parseInt(interaction.values[0]!);
       session.imageBuffer = generateImage(session);
 
-      await interaction.update(buildPreviewPayload(session));
-      return;
-    }
-
-    // 色テンプレート → プレビュー更新
-    if (
-      interaction.isStringSelectMenu() &&
-      interaction.customId === "emoji_color_select"
-    ) {
-      const session = sessions.get(interaction.user.id);
-      if (!session) {
-        await interaction.reply({
-          content: "セッションが見つかりません。/emoji を実行してください。",
-          flags: 64,
-        });
-        return;
-      }
-
-      const selected = interaction.values[0]!;
-      if (selected === "custom") {
-        await interaction.deferUpdate();
-        return;
-      }
-
-      const color = COLOR_LIST[parseInt(selected, 10)];
-      if (!color) {
-        await interaction.reply({
-          content: "不明な色です。",
-          flags: 64,
-        });
-        return;
-      }
-
-      session.background = color.value;
-      session.imageBuffer = generateImage(session);
       await interaction.update(buildPreviewPayload(session));
       return;
     }
