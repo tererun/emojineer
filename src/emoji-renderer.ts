@@ -232,15 +232,19 @@ function angleToCoords(
   w: number,
   h: number,
 ): { x0: number; y0: number; x1: number; y1: number } {
-  const rad = ((angle - 90) * Math.PI) / 180;
+  // CSS linear-gradient と同じく、0% と 100% がキャンバス端に来る長さにする
+  // 0deg は上方向、90deg は右方向
+  const rad = (angle * Math.PI) / 180;
+  const dx = Math.sin(rad);
+  const dy = -Math.cos(rad);
+  const len = Math.abs(w * dx) + Math.abs(h * dy);
   const cx = w / 2;
   const cy = h / 2;
-  const len = Math.max(w, h);
   return {
-    x0: cx - Math.cos(rad) * len,
-    y0: cy - Math.sin(rad) * len,
-    x1: cx + Math.cos(rad) * len,
-    y1: cy + Math.sin(rad) * len,
+    x0: cx - (dx * len) / 2,
+    y0: cy - (dy * len) / 2,
+    x1: cx + (dx * len) / 2,
+    y1: cy + (dy * len) / 2,
   };
 }
 

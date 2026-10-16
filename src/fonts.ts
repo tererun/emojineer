@@ -27,6 +27,7 @@ export const FONT_LIST: FontEntry[] = [
   // M PLUS Rounded 1c
   { family: "M PLUS Rounded 1c", weight: 400, label: "M PLUS Rounded 1c Regular" },
   { family: "M PLUS Rounded 1c", weight: 800, label: "M PLUS Rounded 1c ExtraBold" },
+  { family: "M PLUS Rounded 1c", weight: 900, label: "M PLUS Rounded 1c Black" },
   // M PLUS 1p
   { family: "M PLUS 1p", weight: 700, label: "M PLUS 1p Bold" },
   { family: "M PLUS 1p", weight: 900, label: "M PLUS 1p Black" },
@@ -44,6 +45,16 @@ export const FONT_LIST: FontEntry[] = [
   { family: "Yusei Magic", weight: 400, label: "Yusei Magic" },
   { family: "Hachi Maru Pop", weight: 400, label: "Hachi Maru Pop" },
 ];
+
+const DEFAULT_FONT_LABEL = "M PLUS Rounded 1c Black";
+
+export const DEFAULT_FONT_INDEX = FONT_LIST.findIndex(
+  (font) => font.label === DEFAULT_FONT_LABEL,
+);
+
+if (DEFAULT_FONT_INDEX < 0) {
+  throw new Error(`Default font is missing from FONT_LIST: ${DEFAULT_FONT_LABEL}`);
+}
 
 const CACHE_DIR = join(import.meta.dir, "../.fonts");
 

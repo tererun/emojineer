@@ -17,7 +17,13 @@ import {
   LabelBuilder,
 } from "discord.js";
 import { renderEmoji } from "./emoji-renderer";
-import { initFonts, FONT_LIST } from "./fonts";
+import { initFonts, FONT_LIST, DEFAULT_FONT_INDEX } from "./fonts";
+import {
+  COLOR_LIST,
+  DEFAULT_BACKGROUND,
+  findColorIndex,
+  formatColor,
+} from "./colors";
 import {
   loadPermissions,
   checkPermission,
@@ -153,7 +159,7 @@ function buildModal(defaults?: {
   const bgInput = new TextInputBuilder()
     .setCustomId("emoji_bg")
     .setStyle(TextInputStyle.Short)
-    .setPlaceholder("#fff / linear-gradient(45deg, red, blue)")
+    .setPlaceholder("空欄で白。テンプレートは次の画面")
     .setRequired(false);
   if (defaults?.background) bgInput.setValue(defaults.background);
 
@@ -213,14 +219,50 @@ function buildPreviewPayload(session: EmojiSession) {
       `**:${session.emojiName}:** のプレビュー`,
       `テキスト: \`${session.text.replace(/\n/g, "\\n")}\``,
       `フォント: \`${font.label}\``,
-      `色: \`${session.background}\``,
+      `色: ${formatColor(session.background)}`,
     ].join("\n"),
     files: [attachment],
     components: [
       new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(fontSelect),
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        buildColorSelect(session.background),
+      ),
       buttons,
     ],
   };
+}
+
+function buildColorSelect(background: string): StringSelectMenuBuilder {
+  const selected = findColorIndex(background);
+  const options: {
+    label: string;
+    value: string;
+    emoji: string;
+    default: boolean;
+    description?: string;
+  }[] = COLOR_LIST.map((color, i) => ({
+    label: color.label,
+    value: String(i),
+    emoji: color.emoji,
+    default: i === selected,
+  }));
+
+  if (selected < 0) {
+    const description =
+      background.length > 100 ? `${background.slice(0, 97)}...` : background;
+    options.unshift({
+      label: "カスタム",
+      value: "custom",
+      emoji: "🎨",
+      description,
+      default: true,
+    });
+  }
+
+  return new StringSelectMenuBuilder()
+    .setCustomId("emoji_color_select")
+    .setPlaceholder("色のテンプレート")
+    .addOptions(options);
 }
 
 client.on("clientReady", () => {
@@ -390,7 +432,7 @@ client.on("interactionCreate", async (interaction) => {
       const emojiName = interaction.fields.getTextInputValue("emoji_name");
       const text = interaction.fields.getTextInputValue("emoji_text");
       const background =
-        interaction.fields.getTextInputValue("emoji_bg") || "#ffffff";
+        interaction.fields.getTextInputValue("emoji_bg") || DEFAULT_BACKGROUND;
 
       if (!/^[a-zA-Z0-9_]{2,32}$/.test(emojiName)) {
         await interaction.reply({
@@ -402,7 +444,7 @@ client.on("interactionCreate", async (interaction) => {
       }
 
       const existing = sessions.get(interaction.user.id);
-      const fontIndex = existing?.fontIndex ?? 0;
+      const fontIndex = existing?.fontIndex ?? DEFAULT_FONT_INDEX;
 
       const session: EmojiSession = {
         text,
@@ -441,6 +483,41 @@ client.on("interactionCreate", async (interaction) => {
       session.fontIndex = parseInt(interaction.values[0]!);
       session.imageBuffer = generateImage(session);
 
+      await interaction.update(buildPreviewPayload(session));
+      return;
+    }
+
+    // 色テンプレート → プレビュー更新
+    if (
+      interaction.isStringSelectMenu() &&
+      interaction.customId === "emoji_color_select"
+    ) {
+      const session = sessions.get(interaction.user.id);
+      if (!session) {
+        await interaction.reply({
+          content: "セッションが見つかりません。/emoji を実行してください。",
+          flags: 64,
+        });
+        return;
+      }
+
+      const selected = interaction.values[0]!;
+      if (selected === "custom") {
+        await interaction.deferUpdate();
+        return;
+      }
+
+      const color = COLOR_LIST[parseInt(selected, 10)];
+      if (!color) {
+        await interaction.reply({
+          content: "不明な色です。",
+          flags: 64,
+        });
+        return;
+      }
+
+      session.background = color.value;
+      session.imageBuffer = generateImage(session);
       await interaction.update(buildPreviewPayload(session));
       return;
     }
